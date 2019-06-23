@@ -1,8 +1,9 @@
 import dis
+import re
 import sys
 from types import CodeType, FunctionType
 
-__all__ = ['update_function']
+__all__ = ['update_function', 'COManipulator']
 
 
 i2b = lambda x: x.to_bytes(1, byteorder=sys.byteorder)
@@ -70,7 +71,6 @@ def update_function(f, **kwargs):
     for name in meta_names:
         val = kwargs.get(name)
         new_meta.append(getattr(f, name) if val is None else UPDATE_META[name](f, val))
-    import pdb; pdb.set_trace()
     return FunctionType(*tuple([new] + new_meta))
 
 
@@ -87,49 +87,26 @@ def search_name(co, inst, idx):
         return None
 
 
-class COMap(object):
-    def __init__(self):
-        pass
+def inject_load_inst(co, old_name, new_name, new_co_names):
+    list_old_name = old_name.split('.')
+    list_new_name = new_name.split('.')
 
-    @classmethod
-    def positioning(cls, co_src, co_tgt):
-        # src: LOAD_GLOBAL -> tgt: LOAD_GLOBAL, LOAD_NAME
-        # src: LOAD_FAST -> tgt: LOAD_FAST, LOAD_NAME
-        code_src = co_src.co_code
-        code_tgt = co_tgt.co_code
+    inst_load = '([{}|{}])'.format(
+        i2b(OPMAP['LOAD_GLOBAL']).decode(), i2b(OPMAP['LOAD_NAME']).decode()
+    )
+    pattern = ''.join([inst_load + i2b(co.co_names.index(part)).decode() for part in list_old_name])
+    regex = re.compile(pattern.encode())
+    code = co.co_code
 
-        pairs = []
-        pos = 0
-        import pdb; pdb.set_trace()
+    inst_load_global = i2b(OPMAP['LOAD_GLOBAL']).decode()
+    inst_load_attr = i2b(OPMAP['LOAD_ATTR']).decode()
 
-        # 1. based on `co_tgt`, find the begining location of the first line of `co_tgt` in `co_src`
-        while pos < len(code_tgt):
-            tgt_inst, tgt_idx = code_tgt[pos], code_tgt[pos+1]
-            if src_inst == OPMAP['CALL_FUNCTION']:
-                break
-
-            while p < len(code_src):
-                src_inst, src_idx = code_src[pos], code_src[pos+1]
-                if not iscompatible(tgt_inst, src_inst):
-                    p += 2
-                    continue
-                pass
-
-        # rewrite the following code
-        while pos < len(code_src):
-            src_inst, src_idx = code_src[pos], code_src[pos+1]
-            tgt_inst, tgt_idx = code_tgt[pos], code_tgt[pos+1]
-            # 1. check whether `tgt_inst` is a compatible instruction of `src_inst`
-            if not iscompatible(tgt_inst, src_inst):
-                pos += 2
-                continue
-
-            # 2. find the variable set of which `src_idx` and `tgt_idx` locate
-            src_idx_info = search_name(co_src, src_inst, src_idx)
-
-            if src_inst == OPMAP['CALL_FUNCTION']:
-                break
-            pos += 2
+    for matched in regex.finditer(code):
+        start, end = matched.span()
+        payload = ''.join([inst_load_global + i2b(new_co_names.index(name)).decode() for name in list_new_name[:-1]])
+        payload += inst_load_attr + i2b(new_co_names.index(list_new_name[-1])).decode()
+        code = code[:start] + payload.encode() + code[end:]
+    return code
 
 
 class COManipulator(object):
@@ -140,62 +117,36 @@ class COManipulator(object):
     def ori_func(self):
         return self._f
 
-    # def replace_method(self, src, tgt):
-    #     _src = compile(src, '<string>', 'exec')
-    #     _tgt = compile(tgt, '<string>', 'exec')
-
-    #     comap = COMap.positioning(self.fc, _src)
-
-    def update_function(self, target_name, new_func, rename=False):
-        # TODO: make this workable with `mod.func` or `mod.submod.func`
+    def update_function(self, old_name, func_tuple, rename=False, **kwargs):
         co = self._f.__code__
-        new_name = new_func.__name__
-        if target_name not in co.co_names:
-            raise ValueError('Given `target_name` does not exist in {}.'.format(self._f))
+        new_name, new_func = func_tuple
+        splitted_old_name = old_name.split('.')
+        splitted_new_name = new_name.split('.')
 
-        idx = co.co_names.index(target_name)
-        new_co_names = (co.co_names[:idx] + (new_name,) + co.co_names[idx+1:])
-        new_globals = {} if new_name in self._f.__globals__ else {new_name: new_func}
+        if not all([part in co.co_names for part in splitted_old_name]):
+            raise ValueError('Given `old_name` does not exist in {}.'.format(self._f))
+
+        idx = co.co_names.index(splitted_old_name[-1])
+        new_co_names = (co.co_names[:idx] + (splitted_new_name[-1],) + co.co_names[idx+1:])
+
+        # inject new namespaces (e.g. module, class...) and loading instruction (e.g. `LOAD_GLOBAL`...)
+        new_co_code = co.co_code
+        if len(splitted_new_name) > len(splitted_old_name):
+            new_co_names = tuple(list(new_co_names) + splitted_new_name[:-1])
+            new_co_code = inject_load_inst(co, old_name, new_name, new_co_names)
+
+        # inject new modules / variables from into global scope
+        new_globals = kwargs.get('__globals__', {})
+        if new_name not in self._f.__globals__:
+            new_globals.update({new_name: new_func})
+
         new_name = new_name if rename else self._f.__name__
 
         return update_function(
             self._f,
             co_names=new_co_names,
             co_name=new_name,
+            co_code=new_co_code,
             __globals__=new_globals,
             __name__=new_name,
         )
-
-    def reset(self):
-        pass
-
-
-def modify(f, src, target):
-    """
-    Parameters
-    ----------
-    f : function
-    src : string
-    target: string
-
-    Reference
-    ---------
-    https://stackoverflow.com/questions/2904274/globals-and-locals-in-python-exec
-    """
-    fc = f.__code__
-
-    consts = fc.co_consts
-    stacksize = fc.co_stacksize
-    payload = fc.co_code
-
-    _src = compile(src, '<string>', 'exec')
-    _target = compile(target, '<string>', 'exec')
-
-    # e: 101, x65 -> 'LOAD_NAME'
-    # j: 106, x6A -> 'LOAD_ATTR'
-    # t: 116, x74 -> 'LOAD_GLOBAL'
-    # x83 -> 'CALL_FUNCTION'
-
-    import pdb; pdb.set_trace()
-    result = COMap.positioning(fc, _src)
-    # idx = payload.index(_src.co_code)

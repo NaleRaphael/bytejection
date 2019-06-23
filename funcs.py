@@ -1,15 +1,31 @@
 import numpy as np
 
 
-def ori_func():
+def multiply(x, y):
+    return x * y
+
+
+def add(x, y):
+    return x + y
+
+
+def py_multiply():
+    print(multiply(2, 3))
+
+
+def py_add():
+    print(add(2, 3))
+
+
+def np_multiply():
     print(np.multiply(2, 3))
 
 
-def new_func():
+def np_add():
     print(np.add(2, 3))
 
 
 def entry():
-    print('Calling function: ori_func()')
-    ori_func()
+    print('Calling function: py_multiply()')
+    py_multiply()
     print('Remaining operations...')
