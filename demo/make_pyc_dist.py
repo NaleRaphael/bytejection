@@ -24,7 +24,7 @@ def main():
 
     regex = re.compile('.cpython-\d{2}')
 
-    pyc_files = list(pl_path(osp.abspath(dir_target)).glob('**/*.pyc'))
+    pyc_files = list(pl_path(osp.abspath(dir_target)).glob('**/__pycache__/*.pyc'))
     for f in pyc_files:
         parts = f.parts
         idx = parts.index('__pycache__')

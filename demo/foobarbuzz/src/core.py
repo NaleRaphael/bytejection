@@ -6,6 +6,7 @@ def verification():
 
 
 def foo():
+    verification()
     print('foo')
 
 
