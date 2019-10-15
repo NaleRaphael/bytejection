@@ -6,13 +6,13 @@ from bytejection import update_function, COManipulator
 
 def main():
     entry()
-    com = COManipulator(entry)
-    updated = com.update_function('py_multiply', ('py_add', py_add))
+    com = COManipulator()
+    updated = com.update_function(entry, 'py_multiply', ('py_add', py_add))
     updated()
 
     py_multiply()
-    com = COManipulator(py_multiply)
-    updated = com.update_function('multiply', ('np.add', np.add))
+    com = COManipulator()
+    updated = com.update_function(py_multiply, 'multiply', ('np.add', np.add))
     updated()
 
 
