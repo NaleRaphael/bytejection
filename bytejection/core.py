@@ -1,9 +1,12 @@
 import dis
 import re
 import sys
-from types import CodeType, FunctionType
+from types import CodeType, FunctionType, ModuleType
 
-__all__ = ['update_function', 'COManipulator']
+__all__ = [
+    'update_function', 'COManipulator', 'CODumper',
+    'inject_function'
+]
 
 
 i2b = lambda x: x.to_bytes(1, byteorder=sys.byteorder)
@@ -56,8 +59,26 @@ UPDATE_META = {
     '__closure__': _update_meta_closure,
 }
 
-def update_function(f, **kwargs):
-    old = f.__code__
+META = {
+    'function': [
+        '__globals__', '__name__', '__defaults__', '__closure__'
+    ],
+    'module': [
+        '__name__'
+    ],
+}
+
+def _get_code(obj):
+    if hasattr(obj, '__code__'):
+        return getattr(obj, '__code__')
+    elif hasattr(obj, '__loader__'):
+        return getattr(obj, '__loader__').get_code(None)
+    else:
+        raise ValueError('Cannot get code object from this object.')
+
+
+def update_object(obj, _type, **kwargs):
+    old = _get_code(obj)
     attrs = [
         'co_argcount', 'co_kwonlyargcount', 'co_nlocals',
         'co_stacksize', 'co_flags', 'co_code', 'co_consts',
@@ -65,17 +86,24 @@ def update_function(f, **kwargs):
         'co_firstlineno', 'co_lnotab', 'co_freevars', 'co_cellvars'
     ]
     new = CodeType(*(kwargs.get(attr, getattr(old, attr)) for attr in attrs))
-
-    meta_names = ['__globals__', '__name__', '__defaults__', '__closure__']
+    meta_names = META[type(obj).__name__]
     new_meta = []
     for name in meta_names:
         val = kwargs.get(name)
-        new_meta.append(getattr(f, name) if val is None else UPDATE_META[name](f, val))
-    return FunctionType(*tuple([new] + new_meta))
+        new_meta.append(getattr(obj, name) if val is None else UPDATE_META[name](obj, val))
+    return _type(*tuple([new] + new_meta))
+
+
+def update_function(f, **kwargs):
+    return update_object(f, FunctionType, **kwargs)
+
+
+def update_module(mod, **kwargs):
+    return update_object(mod, ModuleType, **kwargs)
 
 
 def iscompatible(tgt, src):
-    return True if (tgt == src or IOPMAP[tgt] in COMP_INST[IOPMAP[src]]) else False
+    return (tgt == src or IOPMAP[tgt] in COMP_INST[IOPMAP[src]])
 
 
 def search_name(co, inst, idx):
@@ -109,22 +137,93 @@ def inject_load_inst(co, old_name, new_name, new_co_names):
     return code
 
 
+def inject_bytecode(co, target_name, bc_payload):
+    list_target_name = target_name.split('.')
+    inst_load = inst_load = '([{}|{}])'.format(
+        i2b(OPMAP['LOAD_GLOBAL']).decode(), i2b(OPMAP['LOAD_NAME']).decode()
+    )
+    pattern = ''.join([inst_load + i2b(co.co_names.index(part)).decode() for part in list_target_name])
+    regex = re.compile(pattern.encode())
+    code = co.co_code
+
+    inst_load_global = i2b(OPMAP['LOAD_GLOBAL']).decode()
+    inst_load_attr = i2b(OPMAP['LOAD_ATTR']).decode()
+
+    for matched in regex.finditer(code):
+        start, end = matched.span()
+        code = code[:start] + bc_payload + code[end:]
+    return code
+
+
+def inject_function(f, target_name, payload_tuple):
+    co = f.__code__
+    payload_name, payload = payload_tuple
+
+    # Manipulate `co_consts`
+    new_co_consts = co.co_consts + tuple([
+        payload.__code__, '{}.<locals>.{}'.format(co.co_name, payload_name)
+    ])
+    idx_payload_co = len(new_co_consts) - 2
+    idx_payload_local_name = len(new_co_consts) - 1
+
+    # Manipulate `co_varnames`
+    new_co_varnames = co.co_varnames + tuple([payload_name])
+    idx_payload_varnames = len(new_co_varnames) - 1
+
+    template_make_function = [
+        (OPMAP['LOAD_CONST'], idx_payload_co),
+        (OPMAP['LOAD_CONST'], idx_payload_local_name),
+        (OPMAP['MAKE_FUNCTION'], 0),
+        (OPMAP['STORE_FAST'], idx_payload_varnames),
+    ]
+    template_load_function = [
+        (OPMAP['LOAD_FAST'], idx_payload_varnames),
+    ]
+    bc_make_function = b''.join([b''.join(list(map(i2b, v))) for v in template_make_function])
+    bc_load_function = b''.join([b''.join(list(map(i2b, v))) for v in template_load_function])
+
+    new_code = inject_bytecode(co, target_name, bc_load_function)
+    new_code = b''.join([bc_make_function, new_code])
+
+    return update_function(
+        f,
+        co_consts=new_co_consts,
+        co_varnames=new_co_varnames,
+        co_code=new_code,
+    )
+
+
+class CODumper(object):
+    """
+    See also: `importlib._bootstrap_external._code_to_bytecode()`
+    """
+    @classmethod
+    def dump(cls, fn, code_object):
+        import marshal
+        import imp
+        import struct, time
+
+        marshalled_co = marshal.dumps(code_object)
+        magic_number = imp.get_magic()
+        timestamp = struct.pack('i', int(time.time()))
+        padding = b'A\x00\x00\x00'
+
+        with open(fn, 'wb') as f:
+            f.write(magic_number)
+            f.write(timestamp)
+            f.write(padding)
+            f.write(marshalled_co)
+
+
 class COManipulator(object):
-    def __init__(self, func):
-        self._f = func
-
-    @property
-    def ori_func(self):
-        return self._f
-
-    def update_function(self, old_name, func_tuple, rename=False, **kwargs):
-        co = self._f.__code__
+    def update_function(self, f, old_name, func_tuple, rename=False, **kwargs):
+        co = f.__code__
         new_name, new_func = func_tuple
         splitted_old_name = old_name.split('.')
         splitted_new_name = new_name.split('.')
 
         if not all([part in co.co_names for part in splitted_old_name]):
-            raise ValueError('Given `old_name` does not exist in {}.'.format(self._f))
+            raise ValueError('Given `old_name` does not exist in {}.'.format(f))
 
         idx = co.co_names.index(splitted_old_name[-1])
         new_co_names = (co.co_names[:idx] + (splitted_new_name[-1],) + co.co_names[idx+1:])
@@ -137,16 +236,55 @@ class COManipulator(object):
 
         # inject new modules / variables from into global scope
         new_globals = kwargs.get('__globals__', {})
-        if new_name not in self._f.__globals__:
+        if new_name not in f.__globals__:
             new_globals.update({new_name: new_func})
 
-        new_name = new_name if rename else self._f.__name__
+        new_name = new_name if rename else f.__name__
 
         return update_function(
-            self._f,
+            f,
             co_names=new_co_names,
             co_name=new_name,
             co_code=new_co_code,
             __globals__=new_globals,
             __name__=new_name,
         )
+
+    def patch_module(self, module, f, old_name, func_tuple, rename=False, **kwargs):
+        payload_name, payload = func_tuple
+        new_func = inject_function(f, old_name, func_tuple)
+        co = _get_code(module)
+
+        # find index of target code object
+        target_name = new_func.__code__.co_name
+        index = None
+        for i, v in enumerate(co.co_consts):
+            co_name = getattr(v, 'co_name', None)
+            if co_name is None or co_name != target_name:
+                continue
+            else:
+                index = i
+                break
+        if index is None:
+            raise RuntimeError('Desired function does not exist in given module.')
+
+        new_co_consts = tuple(
+            co.co_consts[:index] + tuple([new_func.__code__]) + co.co_consts[index+1:]
+        )
+
+        attrs = [
+            'co_argcount', 'co_kwonlyargcount', 'co_nlocals',
+            'co_stacksize', 'co_flags', 'co_code', 'co_consts',
+            'co_names', 'co_varnames', 'co_filename', 'co_name',
+            'co_firstlineno', 'co_lnotab', 'co_freevars', 'co_cellvars'
+        ]
+        payloads = {
+            'co_consts': new_co_consts,
+            'co_names': co.co_names + tuple([payload_name])
+        }
+
+        new_co_module = CodeType(
+            *(kwargs.get(attr, getattr(co, attr) if attr not in payloads else payloads.get(attr))
+            for attr in attrs)
+        )
+        return new_co_module
