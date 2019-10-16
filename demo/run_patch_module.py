@@ -10,7 +10,7 @@ except (ModuleNotFoundError, ImportError) as ex:
     sys.path.insert(0, osp.abspath(osp.join(osp.dirname(__file__), '..')))
 
 from bytejection import COManipulator
-from bytejection.io import COWritter
+from bytejection.io import COWriter
 
 if not _MODULE_INSTALLED:
     sys.path.pop(0)
@@ -43,7 +43,7 @@ def main():
     co_module = com.patch_module(
         mod, mod.foo, 'verification', ('new_verification', new_verification)
     )
-    COWritter.to_pyc('./modified.pyc', co_module)
+    COWriter.to_pyc('./modified.pyc', co_module)
 
     # Check the output of modified function
     print('--- modified version ---')

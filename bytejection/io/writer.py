@@ -10,10 +10,10 @@ else:
 del sys
 
 
-__all__ = ['COWritter']
+__all__ = ['COWriter']
 
 
-class COWritter(object):
+class COWriter(object):
     @classmethod
     def to_pyc(cls, fn, co):
         """
