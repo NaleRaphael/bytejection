@@ -4,7 +4,7 @@ import sys
 from types import CodeType, FunctionType, ModuleType
 
 __all__ = [
-    'update_function', 'COManipulator', 'CODumper',
+    'update_function', 'COManipulator',
     'inject_function'
 ]
 
@@ -15,6 +15,12 @@ OPMAP = dis.opmap
 IOPMAP = {v: k for k, v in OPMAP.items()}
 INS_END = i2b(0)    # INSTRUCTION_END
 
+CO_ATTRS = [
+    'co_argcount', 'co_kwonlyargcount', 'co_nlocals',
+    'co_stacksize', 'co_flags', 'co_code', 'co_consts',
+    'co_names', 'co_varnames', 'co_filename', 'co_name',
+    'co_firstlineno', 'co_lnotab', 'co_freevars', 'co_cellvars'
+]
 
 COMP_INST = {
     'LOAD_GLOBAL': ['LOAD_GLOBAL', 'LOAD_NAME'],
@@ -79,13 +85,7 @@ def _get_code(obj):
 
 def update_object(obj, _type, **kwargs):
     old = _get_code(obj)
-    attrs = [
-        'co_argcount', 'co_kwonlyargcount', 'co_nlocals',
-        'co_stacksize', 'co_flags', 'co_code', 'co_consts',
-        'co_names', 'co_varnames', 'co_filename', 'co_name',
-        'co_firstlineno', 'co_lnotab', 'co_freevars', 'co_cellvars'
-    ]
-    new = CodeType(*(kwargs.get(attr, getattr(old, attr)) for attr in attrs))
+    new = CodeType(*(kwargs.get(attr, getattr(old, attr)) for attr in CO_ATTRS))
     meta_names = META[type(obj).__name__]
     new_meta = []
     for name in meta_names:
@@ -193,28 +193,6 @@ def inject_function(f, target_name, payload_tuple):
     )
 
 
-class CODumper(object):
-    """
-    See also: `importlib._bootstrap_external._code_to_bytecode()`
-    """
-    @classmethod
-    def dump(cls, fn, code_object):
-        import marshal
-        import imp
-        import struct, time
-
-        marshalled_co = marshal.dumps(code_object)
-        magic_number = imp.get_magic()
-        timestamp = struct.pack('i', int(time.time()))
-        padding = b'A\x00\x00\x00'
-
-        with open(fn, 'wb') as f:
-            f.write(magic_number)
-            f.write(timestamp)
-            f.write(padding)
-            f.write(marshalled_co)
-
-
 class COManipulator(object):
     def update_function(self, f, old_name, func_tuple, rename=False, **kwargs):
         co = f.__code__
@@ -272,12 +250,6 @@ class COManipulator(object):
             co.co_consts[:index] + tuple([new_func.__code__]) + co.co_consts[index+1:]
         )
 
-        attrs = [
-            'co_argcount', 'co_kwonlyargcount', 'co_nlocals',
-            'co_stacksize', 'co_flags', 'co_code', 'co_consts',
-            'co_names', 'co_varnames', 'co_filename', 'co_name',
-            'co_firstlineno', 'co_lnotab', 'co_freevars', 'co_cellvars'
-        ]
         payloads = {
             'co_consts': new_co_consts,
             'co_names': co.co_names + tuple([payload_name])
@@ -285,6 +257,6 @@ class COManipulator(object):
 
         new_co_module = CodeType(
             *(kwargs.get(attr, getattr(co, attr) if attr not in payloads else payloads.get(attr))
-            for attr in attrs)
+            for attr in CO_ATTRS)
         )
         return new_co_module

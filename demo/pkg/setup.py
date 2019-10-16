@@ -28,7 +28,7 @@ def get_requirements(fn):
 
 
 def setup_package():
-    write_version_py(VERSION)
+    # write_version_py(VERSION)
 
     # packages to be installed
     excluded = ('tests')
