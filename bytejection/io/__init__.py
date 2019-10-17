@@ -1,5 +1,5 @@
-from . import writter
-from .writter import *
+from . import writer
+from .writer import *
 
 __all__ = []
-__all__.extend(writter.__all__)
+__all__.extend(writer.__all__)
