@@ -3,7 +3,7 @@ import os.path as osp
 try:
     import bytejection
     _MODULE_INSTALLED = True
-except (ModuleNotFoundError, ImportError) as ex:
+except ImportError as ex:
     # Fallback to import from source directory
     _MODULE_INSTALLED = False
     import sys
@@ -48,7 +48,7 @@ def main():
 
     try:
         import foobarbuzz.core as mod
-    except ModuleNotFoundError:
+    except ImportError:
         mod_path = osp.join(THIS_DIR, 'pkg', 'foobarbuzz', 'core.py')
         mod = load_module_from_path('foobarbuzz.core', mod_path)
 
