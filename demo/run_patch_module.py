@@ -44,10 +44,12 @@ def load_module_from_path(name, path):
 
 
 def main():
+    THIS_DIR = osp.dirname(osp.abspath(__file__))
+
     try:
         import foobarbuzz.core as mod
     except ModuleNotFoundError:
-        mod_path = osp.join(osp.dirname(__file__), 'pkg', 'foobarbuzz', 'core.py')
+        mod_path = osp.join(THIS_DIR, 'pkg', 'foobarbuzz', 'core.py')
         mod = load_module_from_path('foobarbuzz.core', mod_path)
 
     # Check the output of original function
@@ -63,11 +65,11 @@ def main():
     co_module = com.patch_module(
         mod, mod.foo, 'verification', ('new_verification', new_verification)
     )
-    COWriter.to_pyc('./modified.pyc', co_module)
+    COWriter.to_pyc(osp.join(THIS_DIR, 'modified.pyc'), co_module)
 
     # Check the output of modified function
     print('--- modified version ---')
-    modified_mod = load_module_from_path('modified', osp.join(osp.dirname(__file__), 'modified.pyc'))
+    modified_mod = load_module_from_path('modified', osp.join(THIS_DIR, 'modified.pyc'))
     modified_mod.foo()
 
 
