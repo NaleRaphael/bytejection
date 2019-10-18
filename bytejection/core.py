@@ -176,6 +176,11 @@ def inject_function(f, target_name, payload_tuple):
         (OPMAP['MAKE_FUNCTION'], 0),
         (OPMAP['STORE_FAST'], idx_payload_varnames),
     ]
+
+    # NOTE: There should be a `0` as an ending instruction in Python 3.5
+    if sys.version_info.major == 3 and sys.version_info.minor == 5:
+        template_make_function = [v + (0,) for v in template_make_function]
+
     template_load_function = [
         (OPMAP['LOAD_FAST'], idx_payload_varnames),
     ]

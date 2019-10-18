@@ -1,4 +1,5 @@
 from sys import version_info
+import os.path as osp
 import marshal
 import time
 
@@ -12,19 +13,22 @@ else:
     del im_util
 
 
-def _w_long(x):
-    return (int(x) & 0xFFFFFFFF).to_bytes(4, 'little')
-
-
 def _code_to_pyc(co, source_size=0):
-    data = bytearray(PY_MAGIC_NUMBER)
+    import importlib as im
+    from importlib import util as im_util
 
-    # A padding character is added in Python 3.7.
-    # https://github.com/python/cpython/blob/3.7/Lib/importlib/_bootstrap_external.py#L539
-    if version_info.major < 3 or version_info.minor == 7:
-        data.extend(_w_long(0))
+    # Prepare to load some internal functions
+    path = osp.join(osp.dirname(im.__file__), '_bootstrap_external.py')
+    spec= im_util.spec_from_file_location('imb', path)
+    mod = im_util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
 
-    data.extend(_w_long(int(time.time())))
-    data.extend(_w_long(source_size))
-    data.extend(marshal.dumps(co))
-    return data
+    # Inject dependencies to dynamically imported module
+    mod.marshal = marshal
+
+    if version_info.major == 3 and version_info.minor == 7:
+        func = mod._code_to_timestamp_pyc
+    else:
+        func = mod._code_to_bytecode
+
+    return func(co)
